@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Admin — Team Codes</title>
+<link rel="stylesheet" href="/style.css" />
+<style>
+  .admin-card{max-width:900px;margin:20px auto;padding:18px}
+  table{width:100%;border-collapse:collapse;margin-top:12px}
+  th,td{padding:8px;border-bottom:1px solid rgba(0,0,0,0.06)}
+  th{background:rgba(0,0,0,0.03);text-align:left}
+  .copy-btn{padding:6px 8px;border-radius:8px;border:none;background:#2b7bff;color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+<main class="container admin-card card">
+  <h2>Permanent Team Codes</h2>
+  <p class="muted">These codes are stored on the server and are permanent.</p>
+  <div id="listArea">Loading...</div>
+</main>
+<script>
+async function loadTeams(){
+  const res = await fetch('/teams');
+  const j = await res.json();
+  const keys = Object.keys(j).sort((a,b)=> (j[a].createdAt > j[b].createdAt ? -1:1));
+  if (!keys.length) {
+    document.getElementById('listArea').innerHTML = '<div class="muted">No teams yet.</div>';
+    return;
+  }
+  let html = '<table><thead><tr><th>Team Code</th><th>Created At</th><th>Actions</th></tr></thead><tbody>';
+  for (const k of keys) {
+    html += `<tr><td><strong>${k}</strong></td><td>${new Date(j[k].createdAt).toLocaleString()}</td><td><button class="copy-btn" data-code="${k}">Copy</button></td></tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('listArea').innerHTML = html;
+  document.querySelectorAll('.copy-btn').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const code = b.dataset.code;
+      navigator.clipboard.writeText(code).then(()=> b.textContent = 'Copied!');
+    });
+  });
+}
+loadTeams();
+</script>
+</body>
+</html>

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Team Chat — Mint & Blue</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<main class="container">
+  <div id="joinScreen" class="card">
+    <div class="header-row">
+      <div>
+        <h1>Team Chat</h1>
+        <p class="muted">Create or join a permanent team — quick & polished.</p>
+      </div>
+      <div class="logo">💬</div>
+    </div>
+
+    <div class="form-row">
+      <label>Your name</label>
+      <input id="nameInput" placeholder="e.g. Sameer" maxlength="50" />
+    </div>
+
+    <div class="form-row small-group">
+      <div>
+        <label>Create a new team</label>
+        <div class="row">
+          <button id="createBtn" class="btn primary">Create new team</button>
+        </div>
+        <small class="muted">Generates a permanent code you can reuse anytime.</small>
+      </div>
+
+      <div>
+        <label>Create with custom code</label>
+        <div class="row">
+          <input id="customCode" placeholder="Custom code (optional)" maxlength="12"/>
+          <button id="createCustomBtn" class="btn">Create</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="or">— OR —</div>
+
+    <div class="form-row">
+      <label>Join an existing team</label>
+      <div class="row">
+        <input id="codeInput" placeholder="Enter team code" />
+        <button id="joinBtn" class="btn">Join</button>
+      </div>
+    </div>
+
+    <div id="feedback" class="muted"></div>
+    <div class="footer-note muted small">Tip: Press Enter in the chat to send. Shift+Enter for newline.</div>
+  </div>
+
+  <div id="chatScreen" class="card hidden chat-card">
+    <header class="chat-header">
+      <div>
+        <strong id="roomLabel"></strong>
+        <p id="subLabel" class="muted small">Messages clear when everyone leaves. Team codes are permanent.</p>
+      </div>
+      <div class="header-actions">
+        <button id="adminBtn" class="btn small ghost">Admin</button>
+        <button id="leaveBtn" class="btn small ghost">Leave</button>
+      </div>
+    </header>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="composer">
+      <div class="tools">
+        <button id="emojiBtn" class="icon-btn">😊</button>
+        <button id="attachBtn" class="icon-btn">📎</button>
+      </div>
+      <textarea id="msgInput" placeholder="Write a message..." rows="1"></textarea>
+      <div class="send-col">
+        <button id="sendBtn" class="btn send">Send ➤</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- Emoji picker (simple) -->
+<div id="emojiPicker" class="emoji-picker hidden" aria-hidden="true"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+
+// UI elements
+const nameInput = document.getElementById('nameInput');
+const createBtn = document.getElementById('createBtn');
+const createCustomBtn = document.getElementById('createCustomBtn');
+const customCode = document.getElementById('customCode');
+const codeInput = document.getElementById('codeInput');
+const joinBtn = document.getElementById('joinBtn');
+const feedback = document.getElementById('feedback');
+
+const joinScreen = document.getElementById('joinScreen');
+const chatScreen = document.getElementById('chatScreen');
+const roomLabel = document.getElementById('roomLabel');
+const messagesEl = document.getElementById('messages');
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+const leaveBtn = document.getElementById('leaveBtn');
+const adminBtn = document.getElementById('adminBtn');
+const emojiBtn = document.getElementById('emojiBtn');
+const emojiPicker = document.getElementById('emojiPicker');
+
+let currentTeam = null;
+
+// small emoji list
+const EMOJIS = ['😀','😄','😊','😉','😍','😘','😎','🤩','😅','😂','😭','😤','👍','🙏','👏','🔥','🌟','✨','🎉','❤️'];
+
+function showFeedback(text, isError = false) {
+  feedback.textContent = text;
+  feedback.style.color = isError ? '#b33' : '';
+  setTimeout(() => { feedback.textContent = ''; }, 5000);
+}
+
+async function createTeamWith(optionalCustom) {
+  const name = nameInput.value.trim();
+  if (!name) return showFeedback('Please enter your name before creating or joining.', true);
+  const body = optionalCustom ? { customCode: optionalCustom } : {};
+  try {
+    const res = await fetch('/create-team', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      const j = await res.json();
+      showFeedback(j.error || 'Failed to create team', true);
+      return;
+    }
+    const j = await res.json();
+    joinTeam(j.teamCode, name);
+  } catch (err) {
+    console.error(err);
+    showFeedback('Network error creating team', true);
+  }
+}
+
+function joinTeam(teamCode, name) {
+  teamCode = String(teamCode).trim().toUpperCase();
+  socket.emit('join-room', { teamCode, name }, (resp) => {
+    if (!resp || !resp.ok) {
+      showFeedback((resp && resp.error) || 'Failed to join team', true);
+      return;
+    }
+    currentTeam = teamCode;
+    roomLabel.textContent = `Team: ${teamCode}`;
+    joinScreen.classList.add('hidden');
+    chatScreen.classList.remove('hidden');
+    messagesEl.innerHTML = '';
+    msgInput.focus();
+  });
+}
+
+createBtn.addEventListener('click', () => createTeamWith(null));
+createCustomBtn.addEventListener('click', () => {
+  const code = customCode.value.trim();
+  if (!code) return showFeedback('Enter a custom code first', true);
+  createTeamWith(code);
+});
+joinBtn.addEventListener('click', () => {
+  const name = nameInput.value.trim();
+  const code = codeInput.value.trim().toUpperCase();
+  if (!name) return showFeedback('Please enter your name', true);
+  if (!code) return showFeedback('Please enter a team code', true);
+  joinTeam(code, name);
+});
+
+// send message
+function sendMessage() {
+  const txt = msgInput.value.trim();
+  if (!txt) return;
+  socket.emit('send-message', { text: txt }, (resp) => {
+    if (!resp || !resp.ok) {
+      showFeedback((resp && resp.error) || 'Failed to send', true);
+    } else {
+      msgInput.value = '';
+      resizeTextarea();
+    }
+  });
+}
+
+sendBtn.addEventListener('click', sendMessage);
+
+// enter/shift+enter
+msgInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// resize textarea
+function resizeTextarea() {
+  msgInput.style.height = 'auto';
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 200) + 'px';
+}
+msgInput.addEventListener('input', resizeTextarea);
+
+// leave
+leaveBtn.addEventListener('click', () => location.reload());
+adminBtn.addEventListener('click', () => window.open('/admin', '_blank'));
+
+// emoji picker
+emojiBtn.addEventListener('click', () => {
+  if (emojiPicker.classList.contains('hidden')) {
+    renderEmojiPicker();
+    const rect = emojiBtn.getBoundingClientRect();
+    emojiPicker.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+    emojiPicker.style.left = (rect.left + window.scrollX) + 'px';
+    emojiPicker.classList.remove('hidden');
+    emojiPicker.setAttribute('aria-hidden', 'false');
+  } else {
+    emojiPicker.classList.add('hidden');
+    emojiPicker.setAttribute('aria-hidden', 'true');
+  }
+});
+document.addEventListener('click', (e) => {
+  if (!emojiPicker.contains(e.target) && e.target !== emojiBtn) {
+    emojiPicker.classList.add('hidden');
+    emojiPicker.setAttribute('aria-hidden', 'true');
+  }
+});
+
+function renderEmojiPicker() {
+  emojiPicker.innerHTML = '';
+  EMOJIS.forEach(em => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'emoji-btn';
+    b.textContent = em;
+    b.addEventListener('click', () => {
+      msgInput.value += em;
+      msgInput.focus();
+      resizeTextarea();
+    });
+    emojiPicker.appendChild(b);
+  });
+}
+
+// socket listeners
+socket.on('room-history', (msgs) => {
+  msgs = msgs || [];
+  messagesEl.innerHTML = '';
+  msgs.forEach(addMessageToUI);
+  scrollToBottom();
+});
+
+socket.on('message', (msg) => {
+  addMessageToUI(msg);
+  scrollToBottom();
+});
+
+socket.on('delete-message', ({ id }) => {
+  const el = document.querySelector(`[data-id="${id}"]`);
+  if (el) el.remove();
+});
+
+function formatTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function addMessageToUI(msg) {
+  const div = document.createElement('div');
+  div.className = 'msg';
+  div.dataset.id = msg.id || ('sys-' + Math.random());
+  if (msg.system) {
+    div.classList.add('system');
+    div.innerHTML = `<div class="sys-text">[${formatTime(msg.ts)}] ${escapeHtml(msg.text)}</div>`;
+  } else {
+    const who = document.createElement('div');
+    who.className = 'who';
+    who.textContent = msg.name + ' • ' + formatTime(msg.ts);
+
+    const text = document.createElement('div');
+    text.className = 'text';
+    text.innerHTML = escapeHtml(msg.text);
+
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'icon-btn small';
+    delBtn.title = 'Delete message';
+    delBtn.textContent = '🗑️';
+    delBtn.addEventListener('click', () => {
+      if (!confirm('Delete this message for everyone?')) return;
+      socket.emit('delete-message', { id: div.dataset.id }, (resp) => {
+        if (!resp || !resp.ok) showFeedback((resp && resp.error) || 'Delete failed', true);
+      });
+    });
+
+    actions.appendChild(delBtn);
+
+    div.appendChild(who);
+    div.appendChild(text);
+    div.appendChild(actions);
+  }
+  messagesEl.appendChild(div);
+}
+
+function scrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// small UX helpers
+nameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') codeInput.focus();
+});
+</script>
+</body>
+</html>
